@@ -1,0 +1,25 @@
+# Stage 0: Build the application jar with Maven (so docker-compose works without a prior mvn package)
+FROM maven:3.9.9-eclipse-temurin-17 AS build
+WORKDIR /workspace
+COPY pom.xml .
+COPY src ./src
+RUN mvn -DskipTests package
+
+# Stage 1: Extract Spring Boot layers from the built jar
+FROM eclipse-temurin:17-jre-jammy AS builder
+WORKDIR /application
+COPY --from=build /workspace/target/*.jar application.jar
+RUN java -Djarmode=layertools -jar application.jar extract
+
+# Stage 2: Build the lightweight runtime image
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /application
+# You can keep the extracted layers (useful for caching), but we will launch via the fat jar for reliability
+COPY --from=builder /application/dependencies/ ./
+COPY --from=builder /application/spring-boot-loader/ ./
+COPY --from=builder /application/snapshot-dependencies/ ./
+COPY --from=builder /application/application/ ./
+# Also copy the packaged jar and run it directly to avoid classpath issues with JarLauncher
+COPY --from=build /workspace/target/*.jar /application/app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/application/app.jar"]
